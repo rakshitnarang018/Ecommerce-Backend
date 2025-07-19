@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from pymongo import MongoClient
 from bson import ObjectId
@@ -40,11 +40,11 @@ class ProductResponse(BaseModel):
     sizes: List[Size] = []
 
 class OrderItem(BaseModel):
-    productId: str = Field(alias="productId")
+    productId: str
     qty: int
 
 class Order(BaseModel):
-    userId: str = Field(alias="userId")
+    userId: str
     items: List[OrderItem]
 
 class OrderResponse(BaseModel):
