@@ -108,30 +108,62 @@ async def create_product(product: Product):
         
         result = products_collection.insert_one(product_dict)
         
-        # Return the created product with ID
-        created_product = products_collection.find_one({"_id": result.inserted_id})
-        return serialize_doc(created_product)
+        # Return only the ID as shown in the API doc
+        return {"id": str(result.inserted_id)}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create product: {str(e)}")
 
 @app.get("/products", status_code=200)
 async def get_products(
+    name: Optional[str] = Query(None, description="Filter by product name (regex/partial search)"),
+    size: Optional[str] = Query(None, description="Filter by size (e.g., 'large')"),
     limit: Optional[int] = Query(10, description="Number of products to return"),
     offset: Optional[int] = Query(0, description="Number of products to skip")
 ):
-    """Get all products with pagination"""
+    """Get all products with filtering and pagination"""
     if products_collection is None:
         raise HTTPException(status_code=500, detail="Database connection failed")
     
     try:
-        cursor = products_collection.find().skip(offset).limit(limit)
-        products = [serialize_doc(product) for product in cursor]
+        # Build query filter
+        query_filter = {}
         
-        # Get actual total count
-        total_count = products_collection.count_documents({})
+        if name:
+            # Case-insensitive regex search for name
+            query_filter["name"] = {"$regex": name, "$options": "i"}
         
-        return {"products": products, "total": total_count, "returned": len(products)}
+        if size:
+            # Filter products that have the specified size
+            query_filter["sizes.size"] = {"$regex": size, "$options": "i"}
+        
+        # Get total count for pagination
+        total_count = products_collection.count_documents(query_filter)
+        
+        # Get products with pagination
+        cursor = products_collection.find(query_filter).skip(offset).limit(limit)
+        products = []
+        
+        for product in cursor:
+            # Serialize and remove sizes from output as shown in API doc
+            serialized_product = serialize_doc(product)
+            # Remove sizes from response as indicated in the comment "# No sizes in output"
+            if "sizes" in serialized_product:
+                del serialized_product["sizes"]
+            products.append(serialized_product)
+        
+        # Calculate pagination info
+        next_offset = offset + limit if offset + limit < total_count else None
+        prev_offset = max(0, offset - limit) if offset > 0 else None
+        
+        return {
+            "data": products,
+            "page": {
+                "next": str(next_offset) if next_offset is not None else None,
+                "limit": limit,
+                "previous": prev_offset
+            }
+        }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch products: {str(e)}")
@@ -183,33 +215,63 @@ async def create_order(order: Order):
         
         result = orders_collection.insert_one(order_dict)
         
-        # Return the created order with ID
-        created_order = orders_collection.find_one({"_id": result.inserted_id})
-        return serialize_doc(created_order)
+        # Return only the ID as shown in the API doc
+        return {"id": str(result.inserted_id)}
         
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create order: {str(e)}")
 
-@app.get("/orders/user/{user_id}", status_code=200)
+@app.get("/orders/{user_id}", status_code=200)
 async def get_user_orders(
     user_id: str,
     limit: Optional[int] = Query(10, description="Number of orders to return"),
     offset: Optional[int] = Query(0, description="Number of orders to skip")
 ):
     """Get orders for a specific user"""
-    if orders_collection is None:
+    if orders_collection is None or products_collection is None:
         raise HTTPException(status_code=500, detail="Database connection failed")
     
     try:
-        cursor = orders_collection.find({"userId": user_id}).skip(offset).limit(limit).sort("created_at", -1)
-        orders = [serialize_doc(order) for order in cursor]
-        
-        # Get actual total count for this user
+        # Get total count for pagination
         total_count = orders_collection.count_documents({"userId": user_id})
         
-        return {"orders": orders, "total": total_count, "returned": len(orders)}
+        # Get orders with pagination
+        cursor = orders_collection.find({"userId": user_id}).skip(offset).limit(limit).sort("created_at", -1)
+        orders = []
+        
+        for order in cursor:
+            serialized_order = serialize_doc(order)
+            
+            # Enhance items with product details as shown in API doc
+            enhanced_items = []
+            for item in serialized_order.get("items", []):
+                product = products_collection.find_one({"_id": ObjectId(item["productId"])})
+                enhanced_item = {
+                    "productDetails": {
+                        "name": product["name"] if product else "Unknown Product",
+                        "id": item["productId"]
+                    },
+                    "qty": item["qty"]
+                }
+                enhanced_items.append(enhanced_item)
+            
+            serialized_order["items"] = enhanced_items
+            orders.append(serialized_order)
+        
+        # Calculate pagination info
+        next_offset = offset + limit if offset + limit < total_count else None
+        prev_offset = max(0, offset - limit) if offset > 0 else None
+        
+        return {
+            "data": orders,
+            "page": {
+                "next": str(next_offset) if next_offset is not None else None,
+                "limit": limit,
+                "previous": prev_offset if prev_offset != offset else None
+            }
+        }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch orders: {str(e)}")
