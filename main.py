@@ -92,7 +92,8 @@ def order_helper(order) -> dict:
 async def create_product(product: Product):
     """Create a new product"""
     try:
-        product_dict = product.dict()
+        # Use model_dump() instead of dict() for Pydantic v2
+        product_dict = product.model_dump()
         result = products_collection.insert_one(product_dict)
         return {"id": str(result.inserted_id)}
     except Exception as e:
@@ -144,7 +145,8 @@ async def list_products(
 async def create_order(order: Order):
     """Create a new order"""
     try:
-        order_dict = order.dict()
+        # Use model_dump() instead of dict() for Pydantic v2
+        order_dict = order.model_dump()
         
         # Calculate total price
         total = 0
