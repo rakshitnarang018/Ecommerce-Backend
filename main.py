@@ -16,8 +16,15 @@ app = FastAPI(
 
 # MongoDB connection
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/")
-client = MongoClient(MONGODB_URL)
-db = client.ecommerce
+try:
+    client = MongoClient(MONGODB_URL)
+    # Test the connection
+    client.admin.command('ping')
+    db = client.ecommerce
+    print("Connected to MongoDB successfully!")
+except Exception as e:
+    print(f"MongoDB connection failed: {e}")
+    raise e
 
 # Collections
 products_collection = db.products
@@ -151,15 +158,25 @@ async def create_order(order: Order):
         # Calculate total price
         total = 0
         for item in order_dict["items"]:
-            product = products_collection.find_one({"_id": ObjectId(item["productId"])})
-            if product:
-                total += product["price"] * item["qty"]
+            # Validate ObjectId format
+            try:
+                product_id = ObjectId(item["productId"])
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Invalid product ID: {item['productId']}")
+            
+            product = products_collection.find_one({"_id": product_id})
+            if not product:
+                raise HTTPException(status_code=404, detail=f"Product not found: {item['productId']}")
+            
+            total += product["price"] * item["qty"]
         
         order_dict["total"] = total
         order_dict["createdAt"] = datetime.utcnow()
         
         result = orders_collection.insert_one(order_dict)
         return {"id": str(result.inserted_id)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -184,8 +201,13 @@ async def get_user_orders(
         for order in cursor:
             order_items = []
             for item in order["items"]:
-                # Get product details
-                product = products_collection.find_one({"_id": ObjectId(item["productId"])})
+                # Get product details with proper ObjectId handling
+                try:
+                    product_id = ObjectId(item["productId"])
+                    product = products_collection.find_one({"_id": product_id})
+                except Exception:
+                    product = None
+                
                 product_item = {
                     "productDetails": product_helper(product) if product else {},
                     "name": product["name"] if product else "Unknown Product",
@@ -224,7 +246,12 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    try:
+        # Test MongoDB connection
+        client.admin.command('ping')
+        return {"status": "healthy", "database": "connected"}
+    except Exception as e:
+        return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
