@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 from typing import List, Optional, Dict, Any
 from pymongo import MongoClient
 from bson import ObjectId
@@ -39,9 +39,9 @@ except Exception as e:
     print("3. Verify database user has proper permissions")
     raise e
 
-# Collections
-products_collection = db.products if db else None
-orders_collection = db.orders if db else None
+# Collections - Fixed the boolean issue
+products_collection = db.products if db is not None else None
+orders_collection = db.orders if db is not None else None
 
 # Models
 class Size(BaseModel):
@@ -58,7 +58,8 @@ class OrderItem(BaseModel):
     productId: str
     qty: int
     
-    @validator('productId')
+    @field_validator('productId')
+    @classmethod
     def validate_product_id(cls, v):
         if not ObjectId.is_valid(v):
             raise ValueError('Invalid product ID format')
@@ -97,7 +98,7 @@ async def root():
 @app.post("/products", status_code=201)
 async def create_product(product: Product):
     """Create a new product"""
-    if not products_collection:
+    if products_collection is None:
         raise HTTPException(status_code=500, detail="Database connection failed")
     
     try:
@@ -120,13 +121,17 @@ async def get_products(
     offset: Optional[int] = Query(0, description="Number of products to skip")
 ):
     """Get all products with pagination"""
-    if not products_collection:
+    if products_collection is None:
         raise HTTPException(status_code=500, detail="Database connection failed")
     
     try:
         cursor = products_collection.find().skip(offset).limit(limit)
         products = [serialize_doc(product) for product in cursor]
-        return {"products": products, "total": len(products)}
+        
+        # Get actual total count
+        total_count = products_collection.count_documents({})
+        
+        return {"products": products, "total": total_count, "returned": len(products)}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch products: {str(e)}")
@@ -134,7 +139,7 @@ async def get_products(
 @app.get("/products/{product_id}", status_code=200)
 async def get_product(product_id: str):
     """Get a specific product by ID"""
-    if not products_collection:
+    if products_collection is None:
         raise HTTPException(status_code=500, detail="Database connection failed")
     
     if not ObjectId.is_valid(product_id):
@@ -156,7 +161,7 @@ async def get_product(product_id: str):
 @app.post("/orders", status_code=201)
 async def create_order(order: Order):
     """Create a new order"""
-    if not orders_collection or not products_collection:
+    if orders_collection is None or products_collection is None:
         raise HTTPException(status_code=500, detail="Database connection failed")
     
     try:
@@ -187,20 +192,24 @@ async def create_order(order: Order):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create order: {str(e)}")
 
-@app.get("/orders/{user_id}", status_code=200)
+@app.get("/orders/user/{user_id}", status_code=200)
 async def get_user_orders(
     user_id: str,
     limit: Optional[int] = Query(10, description="Number of orders to return"),
     offset: Optional[int] = Query(0, description="Number of orders to skip")
 ):
     """Get orders for a specific user"""
-    if not orders_collection:
+    if orders_collection is None:
         raise HTTPException(status_code=500, detail="Database connection failed")
     
     try:
         cursor = orders_collection.find({"userId": user_id}).skip(offset).limit(limit).sort("created_at", -1)
         orders = [serialize_doc(order) for order in cursor]
-        return {"orders": orders, "total": len(orders)}
+        
+        # Get actual total count for this user
+        total_count = orders_collection.count_documents({"userId": user_id})
+        
+        return {"orders": orders, "total": total_count, "returned": len(orders)}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch orders: {str(e)}")
@@ -211,13 +220,17 @@ async def get_all_orders(
     offset: Optional[int] = Query(0, description="Number of orders to skip")
 ):
     """Get all orders with pagination"""
-    if not orders_collection:
+    if orders_collection is None:
         raise HTTPException(status_code=500, detail="Database connection failed")
     
     try:
         cursor = orders_collection.find().skip(offset).limit(limit).sort("created_at", -1)
         orders = [serialize_doc(order) for order in cursor]
-        return {"orders": orders, "total": len(orders)}
+        
+        # Get actual total count
+        total_count = orders_collection.count_documents({})
+        
+        return {"orders": orders, "total": total_count, "returned": len(orders)}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch orders: {str(e)}")
